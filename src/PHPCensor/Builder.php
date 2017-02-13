@@ -336,6 +336,11 @@ class Builder implements LoggerAwareInterface
 
         $this->commandExecutor->setBuildPath($this->buildPath);
 
+        // TODO: stub
+        $secrets = [["SOME_SECRET" => "STUB"]];
+
+        $this->injectSecrets($secrets);
+
         // Create a working copy of the project:
         if (!$this->build->createWorkingCopy($this, $this->buildPath)) {
             throw new \Exception('Could not create a working copy.');
@@ -463,5 +468,12 @@ class Builder implements LoggerAwareInterface
     public function getBuildErrorWriter()
     {
         return $this->buildErrorWriter;
+    }
+
+    protected function injectSecrets($secrets) {
+        // TODO: add logging
+        foreach ($secrets as $name => $secret) {
+           putenv($name . '=' . $secret);
+        }
     }
 }
