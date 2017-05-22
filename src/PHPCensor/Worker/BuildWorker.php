@@ -13,30 +13,33 @@ use PHPCensor\Model\Build;
 
 /**
  * Class BuildWorker
- * @package PHPCensor\Worker
  */
 class BuildWorker
 {
     /**
      * If this variable changes to false, the worker will stop after the current build.
-     * @var bool
+     *
+     * @var boolean
      */
     protected $run = true;
 
     /**
      * The logger for builds to use.
+     *
      * @var \Monolog\Logger
      */
     protected $logger;
 
     /**
-     * beanstalkd host
+     * Beanstalkd host
+     *
      * @var string
      */
     protected $host;
 
     /**
-     * beanstalkd queue to watch
+     * Beanstalkd queue to watch
+     *
      * @var string
      */
     protected $queue;
@@ -47,7 +50,7 @@ class BuildWorker
     protected $pheanstalk;
 
     /**
-     * @var int
+     * @var integer
      */
     protected $totalJobs = 0;
 
@@ -75,34 +78,35 @@ class BuildWorker
      */
     public function startWorker()
     {
-        $this->pheanstalk->watch($this->queue);
-        $this->pheanstalk->ignore('default');
+        $this->pheanstalk
+            ->watch($this->queue)
+            ->ignore('default');
+
         $buildStore = Factory::getStore('Build');
 
         while ($this->run) {
-            // Get a job from the queue:
-            $job = $this->pheanstalk->reserve();
-
-            // Get the job data and run the job:
+            $job     = $this->pheanstalk->reserve();
             $jobData = json_decode($job->getData(), true);
 
-            if (!$this->verifyJob($job, $jobData)) {
+            if (!$this->validateJob($jobData)) {
+                $this->pheanstalk->delete($job);
+
                 continue;
             }
 
             $this->logger->addInfo('Received build #'.$jobData['build_id'].' from Beanstalkd');
 
             try {
-                $build = BuildFactory::getBuildById($jobData['build_id']);
-            } catch (\Exception $ex) {
-                $this->logger->addWarning('Build #' . $jobData['build_id'] . ' does not exist in the database.');
+                $build = BuildFactory::getBuildById((integer)$jobData['build_id']);
+            } catch (\Exception $e) {
+                $this->logger->addError('Exception: ' . $e->getMessage());
                 $this->pheanstalk->delete($job);
+
                 continue;
             }
 
-            // Logging relevant to this build should be stored
-            // against the build itself.
-            $buildDbLog = new BuildDBLogHandler($build, Logger::INFO);
+            // Logging relevant to this build should be stored against the build itself.
+            $buildDbLog = new BuildDBLogHandler(Logger::INFO, true, $build);
             $this->logger->pushHandler($buildDbLog);
 
             try {
@@ -111,7 +115,7 @@ class BuildWorker
             } catch (\PDOException $ex) {
                 // If we've caught a PDO Exception, it is probably not the fault of the build, but of a failed
                 // connection or similar. Release the job and kill the worker.
-                $this->run = false;
+                $this->stopWorker();
                 $this->pheanstalk->release($job);
                 unset($job);
             } catch (\Exception $ex) {
@@ -147,21 +151,22 @@ class BuildWorker
 
     /**
      * Checks that the job received is actually from PHPCI, and has a valid type.
-     * @param Job $job
-     * @param $jobData
+     *
+     * @param mixed $jobData
+     *
      * @return bool
      */
-    protected function verifyJob(Job $job, $jobData)
+    protected function validateJob($jobData)
     {
         if (empty($jobData) || !is_array($jobData)) {
-            // Probably not from PHPCI.
-            $this->pheanstalk->delete($job);
             return false;
         }
 
         if (!array_key_exists('type', $jobData) || $jobData['type'] !== 'php-censor.build') {
-            // Probably not from PHPCI.
-            $this->pheanstalk->delete($job);
+            return false;
+        }
+
+        if (!array_key_exists('build_id', $jobData) || !is_numeric($jobData['build_id'])) {
             return false;
         }
 
